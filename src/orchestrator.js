@@ -6,21 +6,33 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-// Initialize API Clients
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 class TitanOrchestrator {
     constructor() {
         this.browser = null;
+        
+        // Lazy and Safe Initialization (Graceful Fallback)
+        this.genAI = process.env.GEMINI_API_KEY 
+            ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) 
+            : null;
+            
+        this.anthropic = process.env.ANTHROPIC_API_KEY 
+            ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) 
+            : null;
+            
+        this.openai = process.env.OPENAI_API_KEY 
+            ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) 
+            : null;
     }
 
     // Vision & Layout Extraction
     async extractLayoutFromImage(imagePath) {
+        if (!this.genAI) {
+            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY.");
+        }
+        
         console.log(`[Vision] Analyzing image at ${imagePath}`);
         try {
-            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
             const result = await model.generateContent([
                 'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
                 {
@@ -39,10 +51,17 @@ class TitanOrchestrator {
 
     // Code Generation & Review Loop
     async generateAndReviewCode(requirements) {
+        if (!this.anthropic) {
+            throw new Error("Anthropic API is not initialized. Please provide ANTHROPIC_API_KEY to generate code.");
+        }
+        if (!this.genAI) {
+            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY to review code.");
+        }
+
         console.log('[Code Loop] Starting code generation with Claude...');
         try {
             // Step 1: Claude generates code
-            const claudeResponse = await anthropic.messages.create({
+            const claudeResponse = await this.anthropic.messages.create({
                 model: 'claude-3-5-sonnet-20241022',
                 max_tokens: 4000,
                 messages: [{ role: 'user', content: `Write code for the following requirements:\n${requirements}` }]
@@ -51,7 +70,7 @@ class TitanOrchestrator {
             
             console.log('[Code Loop] Reviewing code with Gemini...');
             // Step 2: Gemini reviews code
-            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
             const result = await model.generateContent(`Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`);
             
             return {
