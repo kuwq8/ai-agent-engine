@@ -24,6 +24,22 @@ class TitanOrchestrator {
             : null;
     }
 
+    // General Chat with Gemini
+    async chatWithGemini(prompt) {
+        if (!this.genAI) {
+            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY.");
+        }
+        
+        try {
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+            const result = await model.generateContent(prompt);
+            return result.response.text();
+        } catch (error) {
+            console.error('[Chat] Error:', error);
+            throw error;
+        }
+    }
+
     // Vision & Layout Extraction
     async extractLayoutFromImage(imagePath) {
         if (!this.genAI) {
