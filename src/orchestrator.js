@@ -10,6 +10,7 @@ class TitanOrchestrator {
         this.browser = null;
         
         this.geminiApiKey = process.env.GEMINI_API_KEY;
+        this.groqApiKey = process.env.GROQ_API_KEY;
             
         this.anthropic = process.env.ANTHROPIC_API_KEY 
             ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) 
@@ -20,7 +21,38 @@ class TitanOrchestrator {
             : null;
     }
 
-    async generateWithFallback(parts) {
+    async generateWithGroq(prompt) {
+        if (!this.groqApiKey) {
+            throw new Error("GROQ_API_KEY is not defined in environment variables.");
+        }
+        
+        const url = 'https://api.groq.com/openai/v1/chat/completions';
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.groqApiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [{ role: 'user', content: prompt }]
+            })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error?.message || `Groq API Error: ${response.status}`);
+        }
+        
+        if (data.choices && data.choices[0]?.message?.content) {
+            return data.choices[0].message.content;
+        }
+        
+        throw new Error("Invalid response format from Groq API");
+    }
+
+    async generateWithGemini(parts) {
         if (!this.geminiApiKey) {
             throw new Error("GEMINI_API_KEY is not defined in environment variables.");
         }
@@ -87,13 +119,27 @@ class TitanOrchestrator {
         throw lastError || new Error("Failed to generate content with available Gemini models.");
     }
 
-    // General Chat with Gemini
+    // General Chat with Multi-Agent Logic (Gemini + Groq Fallback)
     async chatWithGemini(prompt) {
+        // Direct routing for Groq
+        if (prompt.toLowerCase().startsWith('!groq') || prompt.toLowerCase().startsWith('!llama')) {
+            const cleanPrompt = prompt.replace(/^!(groq|llama)\s*/i, '');
+            console.log(`[Routing] Directing request to Groq (Llama 3.3)...`);
+            return await this.generateWithGroq(cleanPrompt);
+        }
+
+        // Multi-Agent Fallback Logic: Try Gemini first, then Groq
         try {
-            return await this.generateWithFallback([{ text: prompt }]);
+            console.log(`[Routing] Directing request to Gemini...`);
+            return await this.generateWithGemini([{ text: prompt }]);
         } catch (error) {
-            console.error('[Chat] Error:', error);
-            throw error;
+            console.warn(`[Multi-Agent Fallback] Gemini failed (${error.message}). Switching to Groq (Llama 3.3)...`);
+            try {
+                return await this.generateWithGroq(prompt);
+            } catch (groqError) {
+                console.error('[Multi-Agent Fallback] Groq also failed:', groqError.message);
+                throw new Error(`Both primary models (Gemini & Groq) failed. Last Error: ${groqError.message}`);
+            }
         }
     }
 
@@ -113,7 +159,8 @@ class TitanOrchestrator {
         ];
 
         try {
-            return await this.generateWithFallback(parts);
+            // Groq Llama-3-70b text-only is primary for Groq, so stick to Gemini for vision.
+            return await this.generateWithGemini(parts);
         } catch (error) {
             console.error('[Vision] Error:', error);
             throw error;
@@ -141,15 +188,15 @@ class TitanOrchestrator {
             throw error;
         }
             
-        console.log('[Code Loop] Reviewing code with Gemini...');
-        // Step 2: Gemini reviews code
+        console.log('[Code Loop] Reviewing code with Gemini/Groq Multi-Agent...');
+        // Step 2: Multi-Agent reviews code
         const prompt = `Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`;
         
         let reviewResult;
         try {
-            reviewResult = await this.generateWithFallback([{ text: prompt }]);
+            reviewResult = await this.chatWithGemini(prompt); // Reuses the fallback logic
         } catch (error) {
-            console.error('[Code Loop] Gemini Review Error:', error);
+            console.error('[Code Loop] Review Error:', error);
             throw error;
         }
         
