@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { chromium } = require('playwright');
@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Initialize API Clients
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -20,19 +20,17 @@ class TitanOrchestrator {
     async extractLayoutFromImage(imagePath) {
         console.log(`[Vision] Analyzing image at ${imagePath}`);
         try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: [
-                    'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
-                    {
-                        inlineData: {
-                            data: fs.readFileSync(imagePath).toString("base64"),
-                            mimeType: 'image/jpeg' // adjust based on actual image
-                        }
+            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const result = await model.generateContent([
+                'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
+                {
+                    inlineData: {
+                        data: fs.readFileSync(imagePath).toString("base64"),
+                        mimeType: 'image/jpeg'
                     }
-                ]
-            });
-            return response.text();
+                }
+            ]);
+            return result.response.text();
         } catch (error) {
             console.error('[Vision] Error:', error);
             throw error;
@@ -53,14 +51,12 @@ class TitanOrchestrator {
             
             console.log('[Code Loop] Reviewing code with Gemini...');
             // Step 2: Gemini reviews code
-            const geminiResponse = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: `Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`
-            });
+            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const result = await model.generateContent(`Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`);
             
             return {
                 code: generatedCode,
-                review: geminiResponse.text()
+                review: result.response.text()
             };
         } catch (error) {
             console.error('[Code Loop] Error:', error);
@@ -89,7 +85,6 @@ class TitanOrchestrator {
         // Auto-fix simulation (if errors occur, pass to LLM)
         if (errors.length > 0) {
             console.log('[Browser] Analyzing errors for auto-fix...');
-            // Example self-healing loop hook
         }
         
         // Take screenshot
@@ -107,7 +102,7 @@ class TitanOrchestrator {
         
         if (isDangerous) {
             console.warn(`[Safety] DANGEROUS COMMAND DETECTED: ${command}. Explicit user confirmation required.`);
-            return false; // Return false to indicate execution is blocked
+            return false;
         }
         return true;
     }
