@@ -31,12 +31,14 @@ class TitanOrchestrator {
         }
         
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
             const result = await model.generateContent(prompt);
             return result.response.text();
         } catch (error) {
-            console.error('[Chat] Error:', error);
-            throw error;
+            console.warn(`[Gemini Fallback] Model gemini-1.5-flash failed (${error.message}). Falling back to gemini-pro.`);
+            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+            const result = await fallbackModel.generateContent(prompt);
+            return result.response.text();
         }
     }
 
@@ -47,21 +49,25 @@ class TitanOrchestrator {
         }
         
         console.log(`[Vision] Analyzing image at ${imagePath}`);
-        try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
-            const result = await model.generateContent([
-                'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
-                {
-                    inlineData: {
-                        data: fs.readFileSync(imagePath).toString("base64"),
-                        mimeType: 'image/jpeg'
-                    }
+        const content = [
+            'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
+            {
+                inlineData: {
+                    data: fs.readFileSync(imagePath).toString("base64"),
+                    mimeType: 'image/jpeg'
                 }
-            ]);
+            }
+        ];
+
+        try {
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const result = await model.generateContent(content);
             return result.response.text();
         } catch (error) {
-            console.error('[Vision] Error:', error);
-            throw error;
+            console.warn(`[Gemini Fallback] Model gemini-1.5-pro failed (${error.message}). Falling back to gemini-pro-vision.`);
+            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
+            const result = await fallbackModel.generateContent(content);
+            return result.response.text();
         }
     }
 
@@ -75,6 +81,7 @@ class TitanOrchestrator {
         }
 
         console.log('[Code Loop] Starting code generation with Claude...');
+        let generatedCode;
         try {
             // Step 1: Claude generates code
             const claudeResponse = await this.anthropic.messages.create({
@@ -82,21 +89,32 @@ class TitanOrchestrator {
                 max_tokens: 4000,
                 messages: [{ role: 'user', content: `Write code for the following requirements:\n${requirements}` }]
             });
-            const generatedCode = claudeResponse.content[0].text;
-            
-            console.log('[Code Loop] Reviewing code with Gemini...');
-            // Step 2: Gemini reviews code
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
-            const result = await model.generateContent(`Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`);
-            
-            return {
-                code: generatedCode,
-                review: result.response.text()
-            };
+            generatedCode = claudeResponse.content[0].text;
         } catch (error) {
-            console.error('[Code Loop] Error:', error);
+            console.error('[Code Loop] Claude Error:', error);
             throw error;
         }
+            
+        console.log('[Code Loop] Reviewing code with Gemini...');
+        // Step 2: Gemini reviews code
+        const prompt = `Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`;
+        
+        let reviewResult;
+        try {
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const result = await model.generateContent(prompt);
+            reviewResult = result.response.text();
+        } catch (error) {
+            console.warn(`[Gemini Fallback] Model gemini-1.5-pro failed (${error.message}). Falling back to gemini-pro.`);
+            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+            const result = await fallbackModel.generateContent(prompt);
+            reviewResult = result.response.text();
+        }
+        
+        return {
+            code: generatedCode,
+            review: reviewResult
+        };
     }
 
     // Browser Automation
