@@ -26,30 +26,45 @@ class TitanOrchestrator {
             throw new Error("GROQ_API_KEY is not defined in environment variables.");
         }
         
+        const groqModels = [
+            "llama-3.1-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+        ];
         const url = 'https://api.groq.com/openai/v1/chat/completions';
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${this.groqApiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
-                messages: [{ role: 'user', content: prompt }]
-            })
-        });
+        
+        let lastError = null;
+        for (const model of groqModels) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.groqApiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: 'user', content: prompt }]
+                    })
+                });
 
-        const data = await response.json();
-        
-        if (!response.ok) {
-            throw new Error(data.error?.message || `Groq API Error: ${response.status}`);
+                const data = await response.json();
+                
+                if (response.ok && data.choices?.[0]?.message?.content) {
+                    return data.choices[0].message.content;
+                }
+                
+                if (data.error) {
+                    lastError = new Error(data.error.message);
+                }
+            } catch (err) {
+                console.warn(`[Groq Fallback] Model ${model} failed: ${err.message}. Trying next...`);
+                lastError = err;
+            }
         }
         
-        if (data.choices && data.choices[0]?.message?.content) {
-            return data.choices[0].message.content;
-        }
-        
-        throw new Error("Invalid response format from Groq API");
+        throw lastError || new Error("Failed to generate content with available Groq models.");
     }
 
     async generateWithGemini(parts) {
