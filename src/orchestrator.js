@@ -1,5 +1,4 @@
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { chromium } = require('playwright');
@@ -7,20 +6,16 @@ const fs = require('fs');
 const path = require('path');
 
 const candidateModels = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash-002",
   "gemini-1.5-flash",
-  "gemini-1.5-flash-8b"
+  "gemini-2.0-flash",
+  "gemini-1.5-pro"
 ];
 
 class TitanOrchestrator {
     constructor() {
         this.browser = null;
         
-        // Lazy and Safe Initialization (Graceful Fallback)
-        this.genAI = process.env.GEMINI_API_KEY 
-            ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) 
-            : null;
+        this.geminiApiKey = process.env.GEMINI_API_KEY;
             
         this.anthropic = process.env.ANTHROPIC_API_KEY 
             ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) 
@@ -31,29 +26,46 @@ class TitanOrchestrator {
             : null;
     }
 
-    async generateWithFallback(prompt) {
-        if (!this.genAI) {
-            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY.");
+    async generateWithFallback(parts) {
+        if (!this.geminiApiKey) {
+            throw new Error("GEMINI_API_KEY is missing from environment variables.");
         }
         
         let lastError;
-        for (const modelName of candidateModels) {
+        for (const model of candidateModels) {
             try {
-                const model = this.genAI.getGenerativeModel({ model: modelName });
-                const result = await model.generateContent(prompt);
-                return result.response.text();
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.geminiApiKey}`;
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        contents: [{ parts: parts }]
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error?.message || `HTTP ${response.status}`);
+                }
+
+                if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                    return data.candidates[0].content.parts[0].text;
+                } else {
+                    throw new Error("Invalid response format from Gemini API");
+                }
             } catch (err) {
-                console.warn(`[Gemini Fallback] Model ${modelName} failed, trying next... Error:`, err.message);
+                console.warn(`[Gemini Fallback] Model ${model} failed: ${err.message}. Trying next...`);
                 lastError = err;
             }
         }
-        throw lastError;
+        throw new Error(`All Gemini models failed. Last error: ${lastError?.message}`);
     }
 
     // General Chat with Gemini
     async chatWithGemini(prompt) {
         try {
-            return await this.generateWithFallback(prompt);
+            return await this.generateWithFallback([{ text: prompt }]);
         } catch (error) {
             console.error('[Chat] Error:', error);
             throw error;
@@ -63,18 +75,20 @@ class TitanOrchestrator {
     // Vision & Layout Extraction
     async extractLayoutFromImage(imagePath) {
         console.log(`[Vision] Analyzing image at ${imagePath}`);
-        const content = [
-            'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
+        const parts = [
             {
-                inlineData: {
-                    data: fs.readFileSync(imagePath).toString("base64"),
-                    mimeType: 'image/jpeg'
+                text: 'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.'
+            },
+            {
+                inline_data: {
+                    mime_type: 'image/jpeg',
+                    data: fs.readFileSync(imagePath).toString("base64")
                 }
             }
         ];
 
         try {
-            return await this.generateWithFallback(content);
+            return await this.generateWithFallback(parts);
         } catch (error) {
             console.error('[Vision] Error:', error);
             throw error;
@@ -108,7 +122,7 @@ class TitanOrchestrator {
         
         let reviewResult;
         try {
-            reviewResult = await this.generateWithFallback(prompt);
+            reviewResult = await this.generateWithFallback([{ text: prompt }]);
         } catch (error) {
             console.error('[Code Loop] Gemini Review Error:', error);
             throw error;
