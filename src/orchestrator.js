@@ -5,12 +5,6 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const candidateModels = [
-  "gemini-1.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-pro"
-];
-
 class TitanOrchestrator {
     constructor() {
         this.browser = null;
@@ -28,16 +22,23 @@ class TitanOrchestrator {
 
     async generateWithFallback(parts) {
         if (!this.geminiApiKey) {
-            throw new Error("GEMINI_API_KEY is missing from environment variables.");
+            throw new Error("GEMINI_API_KEY is not defined in environment variables.");
         }
-        
-        let lastError;
-        for (const model of candidateModels) {
+
+        // Try v1 endpoint first with standard models
+        const endpoints = [
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`
+        ];
+
+        let lastError = null;
+
+        for (const url of endpoints) {
             try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.geminiApiKey}`;
                 const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         contents: [{ parts: parts }]
                     })
@@ -45,21 +46,44 @@ class TitanOrchestrator {
 
                 const data = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(data.error?.message || `HTTP ${response.status}`);
-                }
-
-                if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
                     return data.candidates[0].content.parts[0].text;
-                } else {
-                    throw new Error("Invalid response format from Gemini API");
                 }
-            } catch (err) {
-                console.warn(`[Gemini Fallback] Model ${model} failed: ${err.message}. Trying next...`);
-                lastError = err;
+                
+                if (data.error) {
+                    lastError = new Error(data.error.message);
+                }
+            } catch (e) {
+                lastError = e;
             }
         }
-        throw new Error(`All Gemini models failed. Last error: ${lastError?.message}`);
+
+        // If fixed endpoints fail, query the list of available models for this key
+        try {
+            const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${this.geminiApiKey}`);
+            const listData = await listRes.json();
+            const validModel = listData.models?.find(m => m.supportedGenerationMethods?.includes("generateContent"));
+
+            if (validModel) {
+                console.log(`[Gemini Fallback] Fixed endpoints failed. Using dynamically found model: ${validModel.name}`);
+                const dynamicUrl = `https://generativelanguage.googleapis.com/v1beta/${validModel.name}:generateContent?key=${this.geminiApiKey}`;
+                const dynRes = await fetch(dynamicUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: parts }]
+                    })
+                });
+                const dynData = await dynRes.json();
+                if (dynData.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    return dynData.candidates[0].content.parts[0].text;
+                }
+            }
+        } catch (err) {
+            console.error("Dynamic model fetch error:", err);
+        }
+
+        throw lastError || new Error("Failed to generate content with available Gemini models.");
     }
 
     // General Chat with Gemini
