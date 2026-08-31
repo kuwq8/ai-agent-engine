@@ -6,6 +6,13 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
+const candidateModels = [
+  "gemini-2.0-flash",
+  "gemini-1.5-flash-002",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b"
+];
+
 class TitanOrchestrator {
     constructor() {
         this.browser = null;
@@ -24,30 +31,37 @@ class TitanOrchestrator {
             : null;
     }
 
-    // General Chat with Gemini
-    async chatWithGemini(prompt) {
+    async generateWithFallback(prompt) {
         if (!this.genAI) {
             throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY.");
         }
         
+        let lastError;
+        for (const modelName of candidateModels) {
+            try {
+                const model = this.genAI.getGenerativeModel({ model: modelName });
+                const result = await model.generateContent(prompt);
+                return result.response.text();
+            } catch (err) {
+                console.warn(`[Gemini Fallback] Model ${modelName} failed, trying next... Error:`, err.message);
+                lastError = err;
+            }
+        }
+        throw lastError;
+    }
+
+    // General Chat with Gemini
+    async chatWithGemini(prompt) {
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-            const result = await model.generateContent(prompt);
-            return result.response.text();
+            return await this.generateWithFallback(prompt);
         } catch (error) {
-            console.warn(`[Gemini Fallback] Model gemini-1.5-flash failed (${error.message}). Falling back to gemini-pro.`);
-            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
-            const result = await fallbackModel.generateContent(prompt);
-            return result.response.text();
+            console.error('[Chat] Error:', error);
+            throw error;
         }
     }
 
     // Vision & Layout Extraction
     async extractLayoutFromImage(imagePath) {
-        if (!this.genAI) {
-            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY.");
-        }
-        
         console.log(`[Vision] Analyzing image at ${imagePath}`);
         const content = [
             'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
@@ -60,14 +74,10 @@ class TitanOrchestrator {
         ];
 
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-            const result = await model.generateContent(content);
-            return result.response.text();
+            return await this.generateWithFallback(content);
         } catch (error) {
-            console.warn(`[Gemini Fallback] Model gemini-1.5-pro failed (${error.message}). Falling back to gemini-pro-vision.`);
-            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
-            const result = await fallbackModel.generateContent(content);
-            return result.response.text();
+            console.error('[Vision] Error:', error);
+            throw error;
         }
     }
 
@@ -75,9 +85,6 @@ class TitanOrchestrator {
     async generateAndReviewCode(requirements) {
         if (!this.anthropic) {
             throw new Error("Anthropic API is not initialized. Please provide ANTHROPIC_API_KEY to generate code.");
-        }
-        if (!this.genAI) {
-            throw new Error("Gemini API is not initialized. Please provide GEMINI_API_KEY to review code.");
         }
 
         console.log('[Code Loop] Starting code generation with Claude...');
@@ -101,14 +108,10 @@ class TitanOrchestrator {
         
         let reviewResult;
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-            const result = await model.generateContent(prompt);
-            reviewResult = result.response.text();
+            reviewResult = await this.generateWithFallback(prompt);
         } catch (error) {
-            console.warn(`[Gemini Fallback] Model gemini-1.5-pro failed (${error.message}). Falling back to gemini-pro.`);
-            const fallbackModel = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
-            const result = await fallbackModel.generateContent(prompt);
-            reviewResult = result.response.text();
+            console.error('[Code Loop] Gemini Review Error:', error);
+            throw error;
         }
         
         return {
