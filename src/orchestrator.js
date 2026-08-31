@@ -25,11 +25,12 @@ class TitanOrchestrator {
             throw new Error("GEMINI_API_KEY is not defined in environment variables.");
         }
 
-        // Try v1 endpoint first with standard models
+        // Try v1beta endpoint first with standard models
         const endpoints = [
-            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-pro:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`
         ];
 
         let lastError = null;
