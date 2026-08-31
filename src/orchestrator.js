@@ -31,7 +31,7 @@ class TitanOrchestrator {
         }
         
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
             const result = await model.generateContent(prompt);
             return result.response.text();
         } catch (error) {
@@ -48,7 +48,7 @@ class TitanOrchestrator {
         
         console.log(`[Vision] Analyzing image at ${imagePath}`);
         try {
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
             const result = await model.generateContent([
                 'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.',
                 {
@@ -86,7 +86,7 @@ class TitanOrchestrator {
             
             console.log('[Code Loop] Reviewing code with Gemini...');
             // Step 2: Gemini reviews code
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
             const result = await model.generateContent(`Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`);
             
             return {
