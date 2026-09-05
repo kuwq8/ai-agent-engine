@@ -5,6 +5,7 @@ const TitanOrchestrator = require('./orchestrator');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { initDatabase } = require('./memory');
 
 const app = express();
 
