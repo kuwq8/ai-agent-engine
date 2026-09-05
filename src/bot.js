@@ -36,6 +36,7 @@ if (!botToken) {
 
     client.once('ready', () => {
         console.log(`Logged in as ${client.user.tag}! Ready to orchestrate tasks.`);
+        initDatabase();
     });
 
     // Helper function to split long messages
