@@ -27,10 +27,10 @@ class TitanOrchestrator {
         }
         
         const groqModels = [
+            "llama-3.3-70b-versatile",
             "llama-3.1-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it"
+            "mixtral-8x7b-32768"
         ];
         const url = 'https://api.groq.com/openai/v1/chat/completions';
         
@@ -74,10 +74,8 @@ class TitanOrchestrator {
 
         // Try v1beta endpoint first with standard models
         const endpoints = [
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-pro:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${this.geminiApiKey}`
         ];
 
         let lastError = null;
