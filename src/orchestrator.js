@@ -71,65 +71,33 @@ class TitanOrchestrator {
         if (!this.geminiApiKey) {
             throw new Error("GEMINI_API_KEY is not defined in environment variables.");
         }
+        const { GoogleGenerativeAI } = require('@google/generative-ai');
+        const genAI = new GoogleGenerativeAI(this.geminiApiKey);
+        
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.5-pro",
+            systemInstruction: "أنت ذكاء اصطناعي (Gemini)، مساعد ذكي ورهيب. مطلوب منك تفهم وترد باللغة العربية العامية بأسلوب عفوي وطبيعي (يفضل الخليجية/السعودية)، خليك متعاون جداً وجاوب على كل استفسارات المستخدم بوضوح وبدون تكلف."
+        });
 
-        // Try v1beta endpoint first with standard models
-        const endpoints = [
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${this.geminiApiKey}`
-        ];
-
-        let lastError = null;
-
-        for (const url of endpoints) {
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: parts }]
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    return data.candidates[0].content.parts[0].text;
-                }
-                
-                if (data.error) {
-                    lastError = new Error(data.error.message);
-                }
-            } catch (e) {
-                lastError = e;
+        const formattedParts = parts.map(p => {
+            if (p.inline_data) {
+                return {
+                    inlineData: {
+                        data: p.inline_data.data,
+                        mimeType: p.inline_data.mime_type
+                    }
+                };
             }
-        }
+            return p.text;
+        });
 
-        // If fixed endpoints fail, query the list of available models for this key
         try {
-            const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${this.geminiApiKey}`);
-            const listData = await listRes.json();
-            const validModel = listData.models?.find(m => m.supportedGenerationMethods?.includes("generateContent"));
-
-            if (validModel) {
-                console.log(`[Gemini Fallback] Fixed endpoints failed. Using dynamically found model: ${validModel.name}`);
-                const dynamicUrl = `https://generativelanguage.googleapis.com/v1beta/${validModel.name}:generateContent?key=${this.geminiApiKey}`;
-                const dynRes = await fetch(dynamicUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: parts }]
-                    })
-                });
-                const dynData = await dynRes.json();
-                if (dynData.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    return dynData.candidates[0].content.parts[0].text;
-                }
-            }
+            const result = await model.generateContent(formattedParts);
+            return result.response.text();
         } catch (err) {
-            console.error("Dynamic model fetch error:", err);
+            console.error("Gemini SDK Error:", err);
+            throw new Error(`Gemini Error: ${err.message}`);
         }
-
-        throw lastError || new Error("Failed to generate content with available Gemini models.");
     }
 
     // General Chat with Multi-Agent Logic (Gemini + Groq Fallback)
