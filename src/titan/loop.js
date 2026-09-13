@@ -1,9 +1,6 @@
-const GitWorkspace = require('./git');
-
 class TitanLoop {
   constructor(engine) {
     this.engine = engine;
-    this.git = new GitWorkspace(engine.workspace);
     this.maxIterations = Number(process.env.TITAN_MAX_ITERATIONS || 3);
   }
 
@@ -12,75 +9,51 @@ class TitanLoop {
     let currentTask = task;
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration += 1) {
-      await onProgress(`🧠 Titan iteration ${iteration}/${this.maxIterations}: analysing...`);
+      await onProgress(`🧠 Titan ${iteration}/${this.maxIterations}: يفهم المشروع ويحلل السبب...`);
       const discussion = await this.engine.analyze(currentTask);
-      const proposal = discussion.builderProposal || discussion.builder || '';
-
-      await onProgress('🔍 Reviewer is checking the proposed solution...');
-      const review = discussion.review || '';
-      const rejected = /(reject|critical|unsafe|do not implement|incorrect|major bug)/i.test(String(review));
-      if (rejected) {
-        history.push({ iteration, discussion, applied: false, reason: 'review_rejected' });
-        currentTask = `${task}\n\nReviewer rejected the previous proposal.\n${review}\n\nProduce a safer corrected proposal.`;
+      const patch = discussion.builderProposal;
+      if (!patch || !Array.isArray(patch.edits)) {
+        history.push({ iteration, applied: false, reason: 'invalid_builder_patch' });
+        currentTask = `${task}\nBuilder لم يرجع Patch صالح. أعد الخطة وأرجع JSON مطابق للمخطط.`;
         continue;
       }
 
-      let patch = null;
-      try {
-        patch = typeof proposal === 'object' ? proposal : JSON.parse(String(proposal).replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim());
-      } catch (_) {
-        history.push({ iteration, discussion, applied: false, reason: 'builder_invalid_json' });
-        currentTask = `${task}\n\nBuilder output was not valid JSON. Return only the required edit JSON.`;
+      await onProgress('🔍 Reviewer يراجع التعديل قبل لمس الملفات...');
+      const review = String(discussion.review || '');
+      if (/(reject|critical|unsafe|do not implement|incorrect|major bug)/i.test(review)) {
+        history.push({ iteration, applied: false, reason: 'review_rejected', review, patch });
+        currentTask = `${task}\n\nReviewer rejected the patch:\n${review}\n\nProduce a corrected safe patch.`;
         continue;
       }
 
-      const edits = Array.isArray(patch.edits) ? patch.edits : [];
-      if (!edits.length) {
-        history.push({ iteration, discussion, applied: false, reason: 'no_edits' });
-        return { success: true, history, summary: patch.summary || 'No file changes required.' };
-      }
-
-      const checkpoint = await this.git.checkpoint(`Titan iteration ${iteration}`);
-      const backups = [];
+      const commands = Array.isArray(discussion.testPlan?.commands) ? discussion.testPlan.commands : (Array.isArray(patch.commands) ? patch.commands : []);
+      const checkpoint = await this.engine.git.checkpoint(`Titan iteration ${iteration}`);
+      let applied = null;
       try {
-        for (const edit of edits) {
-          if (edit.action !== 'write') throw new Error(`Unsupported edit action: ${edit.action}`);
-          const original = await this.engine.workspace.readFile(edit.path).catch(() => null);
-          backups.push({ path: edit.path, original });
-          await this.engine.executor.write(edit.path, edit.content);
-        }
-
-        await onProgress('🧪 Running verification commands...');
-        const commands = Array.isArray(patch.commands) ? patch.commands : [];
+        await onProgress(`🛠️ تطبيق ${patch.edits.length} تعديل...`);
+        applied = await this.engine.patcher.apply(patch.edits);
+        await onProgress('🧪 تشغيل التحقق...');
         const results = [];
-        for (const command of commands.slice(0, 5)) {
-          try {
-            results.push(await this.engine.executor.run(command));
-          } catch (error) {
-            results.push({ command, code: error.code || 1, stdout: error.stdout || '', stderr: error.stderr || error.message });
-          }
-        }
+        for (const command of commands.slice(0, 5)) results.push(await this.engine.executor.run(command));
         const failed = results.some(r => r.code !== 0);
-        history.push({ iteration, checkpoint, discussion, patch, results, applied: true });
+        history.push({ iteration, checkpoint, patch, commands, results, applied: true });
 
         if (failed) {
-          await onProgress('❌ Verification failed. Titan is diagnosing the failure and will retry.');
-          for (const backup of backups.reverse()) {
-            if (backup.original !== null) await this.engine.executor.write(backup.path, backup.original);
-          }
-          currentTask = `${task}\n\nVerification failed:\n${JSON.stringify(results)}\n\nFind the root cause and propose a corrected fix.`;
+          await onProgress('❌ الاختبار فشل. أرجع التعديل وأبحث عن السبب الجذري...');
+          await this.engine.patcher.restore(applied.backups);
+          currentTask = `${task}\n\nVerification failed. Diagnose from exact results:\n${JSON.stringify(results).slice(0, 30000)}`;
           continue;
         }
 
-        await onProgress('✅ Verification passed. Final review...');
-        await this.engine.memory.add('lessons', { task, iteration, summary: patch.summary || '', commands, result: 'verified' });
-        return { success: true, history, summary: patch.summary || 'Titan completed and verified the change.' };
+        const diff = await this.engine.git.diff().catch(() => ({ stdout: '' }));
+        await this.engine.memory.add('lessons', { task, iteration, summary: patch.summary || '', files: patch.edits.map(e => e.path), commands, result: 'verified' });
+        await this.engine.memory.add('decisions', { task, summary: patch.summary || '', files: patch.edits.map(e => e.path) });
+        await onProgress('✅ التعديل نجح والتحقق اكتمل.');
+        return { success: true, history, summary: patch.summary || 'Titan completed and verified the change.', diff: diff.stdout || '' };
       } catch (error) {
-        for (const backup of backups.reverse()) {
-          if (backup.original !== null) await this.engine.executor.write(backup.path, backup.original).catch(() => {});
-        }
+        if (applied?.backups) await this.engine.patcher.restore(applied.backups).catch(() => {});
         history.push({ iteration, checkpoint, applied: false, error: error.message });
-        currentTask = `${task}\n\nImplementation failed: ${error.message}\nPropose a corrected approach.`;
+        currentTask = `${task}\n\nImplementation failed: ${error.message}\nPropose a corrected safe approach.`;
       }
     }
 
