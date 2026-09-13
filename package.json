@@ -5,7 +5,7 @@
   "main": "src/titan/index.js",
   "scripts": {
     "start": "node src/bot.js",
-    "check:titan": "node -e \"const Titan=require('./src/titan'); const t=new Titan(); console.log('Titan engine loaded:', !!t)\""
+    "check:titan": "node scripts/check-titan.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
