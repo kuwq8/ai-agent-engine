@@ -1,30 +1,34 @@
 require('dotenv').config();
 const { chromium } = require('playwright');
-const fs = require('fs');
 const path = require('path');
 const TitanEngine = require('./titan');
 
+// Legacy compatibility wrapper. Titan is now local-first through Ollama.
+// No Gemini/Groq fallback is used here, so missing cloud API keys cannot break Titan.
 class TitanOrchestrator {
   constructor() {
     this.engine = new TitanEngine();
     this.browser = null;
   }
 
-  async chatWithGemini(prompt) {
+  async chat(prompt) {
     const result = await this.engine.analyze(prompt);
     return [
       '🧠 Titan Council',
       `Architect:\n${result.architect}`,
       `Librarian:\n${result.librarian}`,
-      `Builder:\n${result.builder}`,
-      `Reviewer:\n${result.review}`,
-      `Tester:\n${result.testPlan}`
+      `Builder:\n${JSON.stringify(result.builderProposal ?? result.builder)}`,
+      `Reviewer:\n${JSON.stringify(result.review)}`,
+      `Tester:\n${JSON.stringify(result.testPlan)}`
     ].join('\n\n');
   }
 
+  // Kept for callers using the old method name; it no longer calls Gemini.
+  async chatWithGemini(prompt) { return this.chat(prompt); }
+
   async generateAndReviewCode(requirements) {
     const result = await this.engine.analyze(requirements);
-    return { code: result.builder, review: result.review };
+    return { code: result.builderProposal ?? result.builder, review: result.review };
   }
 
   async inspectProject() { return this.engine.inspect(); }
