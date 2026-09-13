@@ -39,21 +39,27 @@ class TitanEngine {
     return { model: this.model.model, ollama: healthy, workspace: inspection.root, fileCount: inspection.fileCount, git: gitStatus, head: head.stdout };
   }
 
-  async analyze(task) {
+  async buildContext(task) {
     const files = await this.workspace.listFiles();
-    const memory = await this.memory.load();
+    const memory = await this.memory.relevant(task, 8);
     const map = buildProjectMap(files);
+    const terms = [...new Set(String(task).split(/[^\p{L}\p{N}_]+/u).filter(x => x.length > 2))].slice(0, 10);
     const candidates = [];
-    for (const term of String(task).split(/\W+/).filter(x => x.length > 2).slice(0, 8)) {
-      candidates.push(...await this.workspace.search(term, 8));
-    }
-    const relevant = [...new Set(candidates)].slice(0, 20);
+    for (const term of terms) candidates.push(...await this.workspace.search(term, 8));
+    const relevant = [...new Set(candidates)].slice(0, 24);
     const snippets = [];
     for (const file of relevant) {
       try { snippets.push(`\n--- ${file} ---\n${(await this.workspace.readFile(file)).slice(0, 12000)}`); } catch (_) {}
     }
-    const context = `Workspace: ${this.workspace.root}\nProject map:\n${JSON.stringify(map)}\nFiles (${files.length}):\n${files.slice(0, 600).join('\n')}\n\nRelevant files:\n${snippets.join('\n')}\n\nProject memory:\n${JSON.stringify(memory)}`;
-    return this.council.discuss(task, context.slice(0, 180000));
+    return `Workspace: ${this.workspace.root}\nProject map:\n${JSON.stringify(map)}\nFiles (${files.length}):\n${files.slice(0, 800).join('\n')}\n\nRelevant files:\n${snippets.join('\n')}\n\nRelevant project memory:\n${JSON.stringify(memory)}`.slice(0, 180000);
+  }
+
+  async analyze(task) {
+    return this.council.discuss(task, await this.buildContext(task));
+  }
+
+  async reviewFinal(task, diff) {
+    return this.council.finalReview(task, typeof diff === 'string' ? diff : (diff.stdout || ''));
   }
 
   async run(task, onProgress) { return this.loop.run(task, onProgress); }
