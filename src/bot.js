@@ -1,68 +1,62 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const express = require('express');
-const TitanOrchestrator = require('./orchestrator');
-const fs = require('fs');
-const { initDatabase } = require('./memory');
+const TitanEngine = require('./titan');
 
 const app = express();
-app.get('/', (req, res) => res.json({ service: 'Titan', status: 'running' }));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+app.get('/', (req, res) => res.json({ service: 'Titan', status: 'running' }));
+app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
 
-const botToken = process.env.DISCORD_BOT_TOKEN;
-if (!botToken) {
-  console.warn('DISCORD_BOT_TOKEN is missing; Discord bot will not start.');
+const token = process.env.DISCORD_BOT_TOKEN;
+if (!token) {
+  console.warn('DISCORD_BOT_TOKEN is missing; HTTP health server remains available.');
 } else {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages],
     partials: [Partials.Channel, Partials.Message]
   });
-  const orchestrator = new TitanOrchestrator();
+  const titan = new TitanEngine();
+  const locks = new Set();
+  const split = (text, max = 1900) => { const s = String(text || ''); const a=[]; for(let i=0;i<s.length;i+=max)a.push(s.slice(i,i+max)); return a.length?a:['']; };
 
-  client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}. Titan local engine ready.`);
-    initDatabase().catch(err => console.warn('Database unavailable; local Titan memory remains available:', err.message));
-  });
-
-  const splitMessage = (text, maxLength = 1900) => {
-    if (!text) return [];
-    const out = [];
-    for (let i = 0; i < text.length; i += maxLength) out.push(text.slice(i, i + maxLength));
-    return out;
-  };
-
+  client.once('ready', () => console.log(`Logged in as ${client.user.tag}. Titan local engine ready.`));
   client.on('messageCreate', async message => {
     if (message.author.bot) return;
-    const mentioned = message.mentions.has(client.user.id);
-    if (!mentioned && !message.channel.isDMBased()) return;
+    if (!message.channel.isDMBased() && !message.mentions.has(client.user.id)) return;
     const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-    if (!prompt) return message.reply('اكتب لي المهمة البرمجية اللي تبي Titan ينفذها.');
-    if (!orchestrator.validateCommand(prompt)) return message.reply('⚠️ الطلب يحتوي عملية عالية الخطورة. عدّل الطلب أو استخدم تأكيدًا صريحًا بعد مراجعة العملية.');
-
+    if (!prompt) return message.reply('اكتب المهمة. مثال: `fix: اصلح مشكلة تسجيل الدخول`');
+    if (locks.has(titan.workspace.root)) return message.reply('⏳ Titan مشغول بمهمة أخرى على نفس المشروع.');
     await message.channel.sendTyping();
-    const status = await message.reply('🧠 Titan بدأ: فهم المشروع → تخطيط → مراجعة → اختبار...');
     try {
-      if (prompt.toLowerCase() === 'status') {
-        const info = await orchestrator.inspectProject();
-        return status.edit(`🟢 Titan\nWorkspace: ${info.root}\nFiles: ${info.fileCount}`);
+      const lower = prompt.toLowerCase();
+      if (lower === 'status' || lower === 'titan status') {
+        const s = await titan.status();
+        return message.reply(split(`🤖 Titan\nOllama: ${s.ollama ? '🟢' : '🔴'}\nModel: ${s.model}\nFiles: ${s.fileCount}\nWorkspace: ${s.workspace}\nGit: ${s.git.stdout || s.git.stderr}`)[0]);
       }
-      if (prompt.toLowerCase().startsWith('search ')) {
-        const matches = await orchestrator.searchProject(prompt.slice(7).trim());
-        return status.edit(`🔎 النتائج:\n${matches.join('\n').slice(0, 1800) || 'لا توجد نتائج'}`);
+      if (lower.startsWith('search ')) {
+        const r = await titan.search(prompt.slice(7).trim());
+        return message.reply(split(`🔎 ${r.join('\n') || 'لا توجد نتائج'}`)[0]);
       }
-      const result = await orchestrator.chatWithGemini(prompt);
-      const parts = splitMessage(result);
-      await status.edit(parts.shift() || 'تم.');
-      for (const part of parts) await message.reply(part);
+      if (lower.startsWith('analyze:')) {
+        const r = await titan.analyze(prompt.slice(8).trim());
+        for (const p of split(`🧠 Architect\n${r.architect}\n\n📚 Librarian\n${r.librarian}\n\n🔍 Reviewer\n${r.review}\n\n🧪 Tester\n${r.testPlan}`)) await message.reply(p);
+        return;
+      }
+      if (lower.startsWith('fix:') || lower.startsWith('titan fix:')) {
+        const task = prompt.replace(/^titan\s+/i, '').slice(4).trim();
+        locks.add(titan.workspace.root);
+        const status = await message.reply('🚀 Titan: تحليل → خطة → مراجعة → تعديل → اختبار → إصلاح تلقائي...');
+        const result = await titan.run(task, text => message.channel.send(text));
+        await status.edit(split(`**Titan:** ${result.success ? '✅ تم والتحقق نجح' : '❌ لم يتم التحقق'}\n${result.summary}\nIterations: ${result.history?.length || 0}`)[0]);
+        return;
+      }
+      const r = await titan.analyze(prompt);
+      for (const p of split(r.architect || 'لم أستطع تحليل الطلب.')) await message.reply(p);
     } catch (error) {
       console.error(error);
-      await status.edit(`❌ Titan error: ${error.message}`);
-    }
+      await message.reply(`❌ Titan error: ${error.message}`);
+    } finally { locks.delete(titan.workspace.root); }
   });
-
-  client.login(botToken).catch(err => console.error('Failed to login to Discord:', err));
-  const stop = async () => { client.destroy(); await orchestrator.cleanup(); process.exit(0); };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  client.login(token).catch(err => console.error('Failed to login:', err));
 }
