@@ -11,8 +11,8 @@ class TitanCouncil {
     const architect = await this.agents[AGENTS.ARCHITECT].think(task, context);
     const librarian = await this.agents[AGENTS.LIBRARIAN].think(task, `${context}\n\nARCHITECT:\n${architect}`);
     const builder = await this.agents[AGENTS.BUILDER].think(task, `${context}\n\nARCHITECT:\n${architect}\n\nLIBRARIAN:\n${librarian}`);
-    const review = await this.agents[AGENTS.REVIEWER].think(task, `${context}\n\nARCHITECT:\n${architect}\n\nLIBRARIAN:\n${librarian}\n\nBUILDER PROPOSAL:\n${JSON.stringify(builder)}`);
-    const testPlan = await this.agents[AGENTS.TESTER].think(task, `${context}\n\nARCHITECT:\n${architect}\n\nBUILDER:\n${JSON.stringify(builder)}\n\nREVIEWER:\n${review}`);
+    const review = await this.agents[AGENTS.REVIEWER].think(task, `${context}\n\nARCHITECT:\n${architect}\n\nLIBRARIAN:\n${librarian}\n\nBUILDER PATCH:\n${JSON.stringify(builder)}`);
+    const testPlan = await this.agents[AGENTS.TESTER].think(task, `${context}\n\nBUILDER PATCH:\n${JSON.stringify(builder)}\n\nREVIEW:\n${review}`);
     return { architect, librarian, builder, builderProposal: builder, review, testPlan };
   }
 }
