@@ -1,240 +1,65 @@
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
-const OpenAI = require('openai');
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const TitanEngine = require('./titan');
 
 class TitanOrchestrator {
-    constructor() {
-        this.browser = null;
-        
-        this.geminiApiKey = process.env.GEMINI_API_KEY;
-        this.groqApiKey = process.env.GROQ_API_KEY;
-            
-        this.anthropic = process.env.ANTHROPIC_API_KEY 
-            ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) 
-            : null;
-            
-        this.openai = process.env.OPENAI_API_KEY 
-            ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) 
-            : null;
+  constructor() {
+    this.engine = new TitanEngine();
+    this.browser = null;
+  }
+
+  async chatWithGemini(prompt) {
+    const result = await this.engine.analyze(prompt);
+    return [
+      '🧠 Titan Council',
+      `Architect:\n${result.architect}`,
+      `Librarian:\n${result.librarian}`,
+      `Builder:\n${result.builder}`,
+      `Reviewer:\n${result.review}`,
+      `Tester:\n${result.testPlan}`
+    ].join('\n\n');
+  }
+
+  async generateAndReviewCode(requirements) {
+    const result = await this.engine.analyze(requirements);
+    return { code: result.builder, review: result.review };
+  }
+
+  async inspectProject() { return this.engine.inspect(); }
+  async searchProject(term, limit = 40) { return this.engine.search(term, limit); }
+  async runCodingTask(task) { return this.engine.run(task); }
+
+  async extractLayoutFromImage() {
+    throw new Error('Local Qwen3-Coder path is text-only. Configure an optional vision model/provider for image analysis.');
+  }
+
+  async runBrowserTests(url) {
+    if (!/^https?:\/\//i.test(url)) throw new Error('Only http/https URLs are allowed.');
+    if (!this.browser) this.browser = await chromium.launch();
+    const page = await this.browser.newPage();
+    const errors = [];
+    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+    page.on('pageerror', err => errors.push(err.message));
+    try {
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      const screenshotPath = path.join(__dirname, '..', `screenshot-${Date.now()}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      return { screenshotPath, errors };
+    } finally {
+      await page.close();
     }
+  }
 
-    async generateWithGroq(prompt) {
-        if (!this.groqApiKey) {
-            throw new Error("GROQ_API_KEY is not defined in environment variables.");
-        }
-        
-        const groqModels = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768"
-        ];
-        const url = 'https://api.groq.com/openai/v1/chat/completions';
-        
-        let lastError = null;
-        for (const model of groqModels) {
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.groqApiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: [{ role: 'user', content: prompt }]
-                    })
-                });
+  validateCommand(command) {
+    if (!command) return true;
+    return !/(rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot|drop\s+database|truncate\s+table)/i.test(command);
+  }
 
-                const data = await response.json();
-                
-                if (response.ok && data.choices?.[0]?.message?.content) {
-                    return data.choices[0].message.content;
-                }
-                
-                if (data.error) {
-                    lastError = new Error(data.error.message);
-                }
-            } catch (err) {
-                console.warn(`[Groq Fallback] Model ${model} failed: ${err.message}. Trying next...`);
-                lastError = err;
-            }
-        }
-        
-        throw lastError || new Error("Failed to generate content with available Groq models.");
-    }
-
-    async generateWithGemini(parts) {
-        if (!this.geminiApiKey) {
-            throw new Error("GEMINI_API_KEY is not defined in environment variables.");
-        }
-        const { GoogleGenerativeAI } = require('@google/generative-ai');
-        const genAI = new GoogleGenerativeAI(this.geminiApiKey);
-        
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-pro",
-            systemInstruction: "أنت ذكاء اصطناعي (Gemini)، مساعد ذكي ورهيب. مطلوب منك تفهم وترد باللغة العربية العامية بأسلوب عفوي وطبيعي (يفضل الخليجية/السعودية)، خليك متعاون جداً وجاوب على كل استفسارات المستخدم بوضوح وبدون تكلف."
-        });
-
-        const formattedParts = parts.map(p => {
-            if (p.inline_data) {
-                return {
-                    inlineData: {
-                        data: p.inline_data.data,
-                        mimeType: p.inline_data.mime_type
-                    }
-                };
-            }
-            return p.text;
-        });
-
-        try {
-            const result = await model.generateContent(formattedParts);
-            return result.response.text();
-        } catch (err) {
-            console.error("Gemini SDK Error:", err);
-            throw new Error(`Gemini Error: ${err.message}`);
-        }
-    }
-
-    // General Chat with Multi-Agent Logic (Gemini + Groq Fallback)
-    async chatWithGemini(prompt) {
-        // Direct routing for Groq
-        if (prompt.toLowerCase().startsWith('!groq') || prompt.toLowerCase().startsWith('!llama')) {
-            const cleanPrompt = prompt.replace(/^!(groq|llama)\s*/i, '');
-            console.log(`[Routing] Directing request to Groq (Llama 3.3)...`);
-            return await this.generateWithGroq(cleanPrompt);
-        }
-
-        // Multi-Agent Fallback Logic: Try Gemini first, then Groq
-        try {
-            console.log(`[Routing] Directing request to Gemini...`);
-            return await this.generateWithGemini([{ text: prompt }]);
-        } catch (error) {
-            console.warn(`[Multi-Agent Fallback] Gemini failed (${error.message}). Switching to Groq (Llama 3.3)...`);
-            try {
-                return await this.generateWithGroq(prompt);
-            } catch (groqError) {
-                console.error('[Multi-Agent Fallback] Groq also failed:', groqError.message);
-                throw new Error(`Both primary models (Gemini & Groq) failed. Last Error: ${groqError.message}`);
-            }
-        }
-    }
-
-    // Vision & Layout Extraction
-    async extractLayoutFromImage(imagePath) {
-        console.log(`[Vision] Analyzing image at ${imagePath}`);
-        const parts = [
-            {
-                text: 'Analyze this UI design and provide a detailed layout structure, colors, and components to achieve 100% design match.'
-            },
-            {
-                inline_data: {
-                    mime_type: 'image/jpeg',
-                    data: fs.readFileSync(imagePath).toString("base64")
-                }
-            }
-        ];
-
-        try {
-            // Groq Llama-3-70b text-only is primary for Groq, so stick to Gemini for vision.
-            return await this.generateWithGemini(parts);
-        } catch (error) {
-            console.error('[Vision] Error:', error);
-            throw error;
-        }
-    }
-
-    // Code Generation & Review Loop
-    async generateAndReviewCode(requirements) {
-        if (!this.anthropic) {
-            throw new Error("Anthropic API is not initialized. Please provide ANTHROPIC_API_KEY to generate code.");
-        }
-
-        console.log('[Code Loop] Starting code generation with Claude...');
-        let generatedCode;
-        try {
-            // Step 1: Claude generates code
-            const claudeResponse = await this.anthropic.messages.create({
-                model: 'claude-3-5-sonnet-20241022',
-                max_tokens: 4000,
-                messages: [{ role: 'user', content: `Write code for the following requirements:\n${requirements}` }]
-            });
-            generatedCode = claudeResponse.content[0].text;
-        } catch (error) {
-            console.error('[Code Loop] Claude Error:', error);
-            throw error;
-        }
-            
-        console.log('[Code Loop] Reviewing code with Gemini/Groq Multi-Agent...');
-        // Step 2: Multi-Agent reviews code
-        const prompt = `Review the following code for bugs, best practices, and security issues. Suggest improvements if any.\n\nCode:\n${generatedCode}`;
-        
-        let reviewResult;
-        try {
-            reviewResult = await this.chatWithGemini(prompt); // Reuses the fallback logic
-        } catch (error) {
-            console.error('[Code Loop] Review Error:', error);
-            throw error;
-        }
-        
-        return {
-            code: generatedCode,
-            review: reviewResult
-        };
-    }
-
-    // Browser Automation
-    async runBrowserTests(url) {
-        console.log(`[Browser] Running automated tests on ${url}`);
-        if (!this.browser) {
-            this.browser = await chromium.launch();
-        }
-        const page = await this.browser.newPage();
-        const errors = [];
-        
-        page.on('console', msg => {
-            if (msg.type() === 'error') {
-                errors.push(msg.text());
-                console.log(`[Browser Console Error] ${msg.text()}`);
-            }
-        });
-
-        await page.goto(url);
-        
-        // Auto-fix simulation (if errors occur, pass to LLM)
-        if (errors.length > 0) {
-            console.log('[Browser] Analyzing errors for auto-fix...');
-        }
-        
-        // Take screenshot
-        const screenshotPath = path.join(__dirname, '..', 'screenshot.png');
-        await page.screenshot({ path: screenshotPath });
-        
-        await page.close();
-        return { screenshotPath, errors };
-    }
-
-    // Safety Guardrails
-    validateCommand(command) {
-        const dangerousKeywords = ['delete', 'drop', 'overwrite', 'rm -rf', 'truncate'];
-        const isDangerous = dangerousKeywords.some(keyword => command.toLowerCase().includes(keyword));
-        
-        if (isDangerous) {
-            console.warn(`[Safety] DANGEROUS COMMAND DETECTED: ${command}. Explicit user confirmation required.`);
-            return false;
-        }
-        return true;
-    }
-    
-    async cleanup() {
-        if (this.browser) {
-            await this.browser.close();
-        }
-    }
+  async cleanup() {
+    if (this.browser) await this.browser.close();
+  }
 }
 
 module.exports = TitanOrchestrator;
