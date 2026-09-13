@@ -1,39 +1,58 @@
 # Titan AI Agent Engine
 
-Titan is being rebuilt as a local-first coding engineer for large repositories.
+Titan is a local-first autonomous software engineering engine designed to work from Discord while the code workspace and Ollama model run on the server.
 
 ## Architecture
 
-- **Architect** — maps the task, dependencies, risks and implementation plan.
-- **Librarian** — preserves project knowledge, decisions and lessons.
-- **Builder** — proposes concrete, small and reversible code changes.
-- **Reviewer** — challenges the plan for bugs, regressions and security problems.
-- **Tester** — defines verification and evidence needed to accept a change.
-- **Council** — passes each agent's result to the next agent so they reason as a team.
-- **Workspace** — safely inspects the configured project directory and searches source files.
-- **Local model** — uses Ollama through its local HTTP API; no cloud API key is required for this path.
+- **Architect** — understands architecture, dependencies, risks and the implementation plan.
+- **Librarian** — maintains durable project decisions and lessons.
+- **Builder** — produces structured file edits and verification commands.
+- **Reviewer** — challenges the proposed implementation for correctness, security and regressions.
+- **Tester** — defines verification and interprets failures as evidence.
+- **Council** — passes evidence between agents so they reason as a team.
+- **Workspace** — safely lists, reads and searches project files.
+- **Executor** — runs a restricted set of project commands with timeouts and output limits.
+- **Loop** — applies proposed changes, verifies them, rolls them back on failure, diagnoses the failure and retries.
+- **Git** — records the current HEAD/status as a non-destructive checkpoint before an iteration.
+- **Memory** — stores verified lessons for future tasks.
+- **Local model** — uses Ollama; the core coding path does not require Gemini, Groq, Claude or OpenAI API keys.
 
 ## Server setup
 
-Set the project directory and optional Ollama settings:
+Copy `.env.example` to `.env` and configure:
 
 ```env
+DISCORD_BOT_TOKEN=
 TITAN_WORKSPACE=/absolute/path/to/the/project
 OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3-coder:30b
 AI_TIMEOUT_MS=120000
+TITAN_COMMAND_TIMEOUT_MS=120000
+TITAN_MAX_ITERATIONS=3
 ```
 
-Install a local model with Ollama, then start Titan normally:
+Then:
 
 ```bash
 ollama run qwen3-coder:30b
 npm install
+npm run check:titan
 npm start
 ```
 
-## Current scope
+## Discord commands
 
-This branch deliberately keeps the existing Discord bot and legacy orchestrator intact while the new engine is built beside them. The new agents do **not** claim to edit or test files until real filesystem, terminal and Git tools are connected.
+- `status` — Ollama, model, workspace and Git status.
+- `search <term>` — source search.
+- `analyze: <task>` — ask the full council to investigate without changing files.
+- `fix: <task>` — autonomous analyze → propose → review → edit → test → diagnose → retry loop.
 
-Next layers are project indexing, command execution sandbox, patch application, Git checkpoints, persistent project memory, iterative test/fix loops, and Discord progress reporting.
+## Safety
+
+Titan never accepts arbitrary shell syntax. Execution is limited to approved executable families, dangerous shell metacharacters are blocked, destructive Git mutations are blocked, and `.git`, `node_modules`, `.env*` and unsafe paths are protected from model writes.
+
+## Verification
+
+`npm run check:titan` syntax-checks every Titan JavaScript module and loads the engine. Full project tests are executed by Titan only when the Builder proposes an allowed verification command and the command completes successfully.
+
+This branch is intentionally isolated from unrelated repositories. Do not deploy until the server has the required `.env` configuration and dependencies installed.
