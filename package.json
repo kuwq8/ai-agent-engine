@@ -1,10 +1,11 @@
 {
   "name": "titan-ai-orchestrator",
-  "version": "1.0.0",
-  "description": "Titan AI Multi-Agent Orchestrator",
-  "main": "src/orchestrator.js",
+  "version": "2.0.0-dev",
+  "description": "Titan AI local-first multi-agent coding engineer",
+  "main": "src/titan/index.js",
   "scripts": {
-    "start": "node src/bot.js"
+    "start": "node src/bot.js",
+    "check:titan": "node -e \"const Titan=require('./src/titan'); const t=new Titan(); console.log('Titan engine loaded:', !!t)\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -12,7 +13,7 @@
     "axios": "^1.7.7",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
-    "express": "^4.21.1",
+    "express": "^4.21.0",
     "openai": "^4.71.0",
     "pg": "^8.23.0",
     "playwright": "^1.48.2"
